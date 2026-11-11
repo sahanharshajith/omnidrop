@@ -1,0 +1,40 @@
+name: Bug Report
+description: Report a defect, socket issue, or transfer error
+title: "[BUG]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for filing an issue to help improve OmniDrop!
+  - type: dropdown
+    id: component
+    attributes:
+      label: Affected Component
+      options:
+        - UDP Discovery
+        - TCP Sender
+        - TCP Receiver
+        - One-to-Many Distribution
+        - Transfer Recovery
+        - WebSocket / Frontend UI
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: Bug Description
+      description: Clear explanation of what happened.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to Reproduce
+      description: Exact steps to reproduce the error offline.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant Logs / Stack Trace
+      render: shell

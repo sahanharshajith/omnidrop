@@ -1,0 +1,22 @@
+name: Feature Request
+description: Propose an enhancement or architectural improvement
+title: "[FEATURE]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: Suggesting a new capability for OmniDrop.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem Statement
+      description: What challenge or user need does this feature address?
+    validations:
+      required: true
+  - type: textarea
+    id: proposed-solution
+    attributes:
+      label: Proposed Solution / Architecture
+      description: Explain the design, socket behavior, or protocol changes.
+    validations:
+      required: true
