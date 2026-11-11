@@ -1,0 +1,48 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: omnidrop-backend
+    ports:
+      - "8080:8080"       # Spring Boot REST API & WebSocket
+      - "9090:9090"       # Java TCP File Transfer ServerSocket
+      - "8888:8888/udp"   # Java UDP Device Discovery Broadcast
+    environment:
+      - SERVER_PORT=8080
+      - OMNIDROP_TCP_PORT=9090
+      - OMNIDROP_UDP_PORT=8888
+      - OMNIDROP_DOWNLOADS_DIR=/app/downloads
+      - OMNIDROP_CHECKPOINTS_DIR=/app/checkpoints
+    volumes:
+      - backend-downloads:/app/downloads
+      - backend-checkpoints:/app/checkpoints
+    restart: unless-stopped
+    networks:
+      - omnidrop-net
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: omnidrop-frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_BACKEND_URL=http://localhost:8080
+      - NEXT_PUBLIC_WS_URL=ws://localhost:8080/ws/transfers
+    depends_on:
+      - backend
+    restart: unless-stopped
+    networks:
+      - omnidrop-net
+
+volumes:
+  backend-downloads:
+  backend-checkpoints:
+
+networks:
+  omnidrop-net:
+    driver: bridge
