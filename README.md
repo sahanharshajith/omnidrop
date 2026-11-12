@@ -25,12 +25,12 @@ Transferring files between devices is difficult or impossible when internet conn
 
 ## 2. Key Architecture & Network Design
 
-```
+``` 
 +-----------------------------------------------------------------------------------------+
 |                                    Next.js Web Frontend                                 |
 |                       (Desktop, Laptop, Tablet, Mobile Web Browser)                     |
 +--------------------------------------------+--------------------------------------------+
-                                             | HTTP REST (:8080) & WebSocket (/ws/transfers)
+                                              | HTTP REST (:8080) & WebSocket (/ws/transfers)
 +--------------------------------------------v--------------------------------------------+
 |                                  Java Spring Boot Backend                               |
 |                                                                                         |
@@ -111,6 +111,19 @@ npm install
 npm run dev
 ```
 *Frontend runs at `http://localhost:3000`.*
+
+#### 3. Run the Test Suites
+```bash
+# Backend — JUnit 5 + Mockito (includes WebSocket handler tests)
+cd backend
+mvn test
+# Frontend — Vitest + Testing Library (WebSocket singleton, React hook, UI card)
+cd frontend
+npm test
+# Optional: frontend coverage report (generated in frontend/coverage/)
+npm run test:coverage
+```
+*See [docs/TESTING.md](docs/TESTING.md) for the full strategy, per-suite breakdown, and manual multi-device checklist.*
 
 ---
 
