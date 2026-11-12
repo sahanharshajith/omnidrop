@@ -51,7 +51,9 @@ class TcpTransferIntegrationTest {
         properties.getStorage().setDownloadsDir(tempDir.resolve("downloads").toString());
         properties.getStorage().setCheckpointsDir(tempDir.resolve("checkpoints").toString());
 
-        TransferWebSocketHandler wsHandler = new TransferWebSocketHandler();
+        // UdpDiscoveryService and TcpFileSenderService are only used for incoming
+        // WebSocket commands; this headless test never sends any, so null is safe.
+        TransferWebSocketHandler wsHandler = new TransferWebSocketHandler(null, null);
         WebSocketNotificationService wsService = new WebSocketNotificationService(wsHandler);
         CheckpointStore checkpointStore = new CheckpointStore(properties);
         TransferRecoveryManager recoveryManager = new TransferRecoveryManager(checkpointStore);

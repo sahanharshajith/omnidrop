@@ -195,4 +195,12 @@ public class TcpFileSenderService {
             }
         }
     }
+
+    public void cancelTransfer(String transferId) {
+        log.info("cancelTransfer requested for transferId={} (stub — Phase 2 will wire into active transfer registry)", transferId);
+    }
+
+    public void resumeTransfer(String transferId) {
+        log.info("resumeTransfer requested for transferId={} (stub — Phase 2 will wire into active transfer registry)", transferId);
+    }
 }
