@@ -4,7 +4,9 @@ import { TransferProgress } from "@/types";
 import { formatBytes, formatDuration } from "@/lib/utils";
 import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
-import { FileUp, FileDown, CheckCircle2, AlertCircle, Clock, Zap } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { transferWs } from "@/lib/websocket";
+import { FileUp, FileDown, CheckCircle2, AlertCircle, Clock, Zap, XCircle, PlayCircle } from "lucide-react";
 
 interface TransferProgressCardProps {
   progress: TransferProgress;
@@ -12,6 +14,14 @@ interface TransferProgressCardProps {
 
 export function TransferProgressCard({ progress }: TransferProgressCardProps) {
   const isSender = progress.role === "SENDER";
+
+  const handleCancel = () => {
+    transferWs.sendCommand("CANCEL_TRANSFER", { transferId: progress.transferId });
+  };
+
+  const handleResume = () => {
+    transferWs.sendCommand("RESUME_TRANSFER", { transferId: progress.transferId });
+  };
 
   const getStatusBadge = () => {
     switch (progress.state) {
@@ -76,6 +86,38 @@ export function TransferProgressCard({ progress }: TransferProgressCardProps) {
           <AlertCircle className="h-4 w-4 shrink-0 text-rose-500" />
           <span>{progress.errorMessage}</span>
         </div>
+      )}
+
+      {isSender && (
+        <>
+          {(progress.state === "TRANSFERRING" || progress.state === "CONNECTING") && (
+            <div className="pt-2 border-t border-slate-100">
+              <Button
+                variant="destructive"
+                size="sm"
+                onClick={handleCancel}
+                className="w-full text-xs"
+              >
+                <XCircle className="mr-1.5 h-3.5 w-3.5" />
+                Cancel Transfer
+              </Button>
+            </div>
+          )}
+
+          {progress.state === "INTERRUPTED" && (
+            <div className="pt-2 border-t border-slate-100">
+              <Button
+                variant="default"
+                size="sm"
+                onClick={handleResume}
+                className="w-full text-xs"
+              >
+                <PlayCircle className="mr-1.5 h-3.5 w-3.5" />
+                Resume Transfer
+              </Button>
+            </div>
+          )}
+        </>
       )}
     </div>
   );
