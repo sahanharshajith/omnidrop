@@ -46,13 +46,29 @@ This document outlines the testing strategy, test cases, and verification proced
 ### 2.6 One-to-Many Concurrent Distribution Tests
 - `OneToManyDistributionTest`: Sets up 3 concurrent receiver sockets, sends a file concurrently via `ExecutorService`, and confirms all 3 receive complete, uncorrupted files without thread deadlocks.
 
+### 2.7 WebSocket Command Dispatch Tests (Member 2)
+- `TransferWebSocketHandlerTest`: Unit tests for the WebSocket handler's two responsibilities:
+  - **Command dispatch** — `TRIGGER_DISCOVERY_PING` invokes `UdpDiscoveryService.triggerManualBroadcast()`; `CANCEL_TRANSFER` / `RESUME_TRANSFER` invoke the corresponding `TcpFileSenderService` methods with the correct `transferId`. Missing-`transferId`, unknown commands, and malformed JSON are swallowed without throwing and without dispatching.
+  - **Event broadcast** — a serialized `WebSocketEvent` is sent to every open session, skipped for closed ones, and never delivered after `afterConnectionClosed` removes that session.
+- 10 tests, Mockito-based, no Spring context required.
+
 ---
 
 ## 3. Frontend Responsive & UI Testing
+
+### 3.1 Manual UI Verification
 - **Viewport Testing**: Verified in Chrome DevTools Device Mode across Mobile (375px), Tablet (768px), and Desktop (1280px+).
 - **WebSocket Reconnection Test**: Terminating and restarting the Java backend verifies that the frontend UI displays a "Reconnecting..." badge and automatically re-establishes state.
 - **Form Validation**: File upload size limits, empty peer selection warnings, and invalid IP notifications.
 
+### 3.2 Automated Frontend Tests (Vitest + Testing Library)
+Run with `cd frontend && npm test` (config in `frontend/vitest.config.mts`). Three suites, 26 tests:
+
+- `__tests__/websocket.test.ts` (8) — the `transferWs` singleton: socket URL construction, idempotent `connect()`, `onEvent` delivery and unsubscribe, malformed-JSON safety, `sendCommand` gating on socket state, and reconnect backoff after close.
+- `__tests__/useWebSocket.test.tsx` (5) — the React hook bridging the singleton to component state: connect on mount, subscribe, `lastMessage` updates on event, `isConnected` reflects `transferWs.isOpen()`, unsubscribe on unmount.
+- `__tests__/TransferProgressCard.test.tsx` (13) — the UI card: file name / percentage / speed rendering, sender/receiver label swap, Cancel visible only while TRANSFERRING or CONNECTING (sender only), Resume visible only when INTERRUPTED (sender only), and both buttons dispatch the correct `sendCommand` payloads when clicked.
+
+`npm run test:coverage` produces a V8 coverage report (`coverage/`, git-ignored).
 ---
 
 ## 4. Offline Multi-Device Field Testing Checklist

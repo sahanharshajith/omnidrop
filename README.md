@@ -25,12 +25,12 @@ Transferring files between devices is difficult or impossible when internet conn
 
 ## 2. Key Architecture & Network Design
 
-```
+``` 
 +-----------------------------------------------------------------------------------------+
 |                                    Next.js Web Frontend                                 |
 |                       (Desktop, Laptop, Tablet, Mobile Web Browser)                     |
 +--------------------------------------------+--------------------------------------------+
-                                             | HTTP REST (:8080) & WebSocket (/ws/transfers)
+                                              | HTTP REST (:8080) & WebSocket (/ws/transfers)
 +--------------------------------------------v--------------------------------------------+
 |                                  Java Spring Boot Backend                               |
 |                                                                                         |
@@ -112,6 +112,19 @@ npm run dev
 ```
 *Frontend runs at `http://localhost:3000`.*
 
+#### 3. Run the Test Suites
+```bash
+# Backend — JUnit 5 + Mockito (includes WebSocket handler tests)
+cd backend
+mvn test
+# Frontend — Vitest + Testing Library (WebSocket singleton, React hook, UI card)
+cd frontend
+npm test
+# Optional: frontend coverage report (generated in frontend/coverage/)
+npm run test:coverage
+```
+*See [docs/TESTING.md](docs/TESTING.md) for the full strategy, per-suite breakdown, and manual multi-device checklist.*
+
 ---
 
 ## 7. Running with Docker
@@ -140,6 +153,7 @@ To share files between two physical laptops on an offline local network:
 - 🏛️ [System Architecture & Mermaid Diagrams](docs/ARCHITECTURE.md)
 - 📡 [Network Protocol Specification (TCP Framing & UDP)](docs/NETWORK_PROTOCOL.md)
 - ⚡ [WebSocket Real-Time Protocol Specification](docs/WEBSOCKET_PROTOCOL.md)
+- 🔗 [WebSocket Integration Guide (Backend ↔ Frontend)](docs/WEB_SOCKET_INTEGRATION.md)
 - 👥 [Team Contribution & Group Allocation](docs/TEAM_CONTRIBUTIONS.md)
 - 🛠️ [Development Setup Guide](docs/DEVELOPMENT_SETUP.md)
 - 🧪 [Testing & Verification Guide](docs/TESTING.md)
