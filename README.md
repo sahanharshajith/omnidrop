@@ -153,6 +153,7 @@ To share files between two physical laptops on an offline local network:
 - 🏛️ [System Architecture & Mermaid Diagrams](docs/ARCHITECTURE.md)
 - 📡 [Network Protocol Specification (TCP Framing & UDP)](docs/NETWORK_PROTOCOL.md)
 - ⚡ [WebSocket Real-Time Protocol Specification](docs/WEBSOCKET_PROTOCOL.md)
+- 🔗 [WebSocket Integration Guide (Backend ↔ Frontend)](docs/WEB_SOCKET_INTEGRATION.md)
 - 👥 [Team Contribution & Group Allocation](docs/TEAM_CONTRIBUTIONS.md)
 - 🛠️ [Development Setup Guide](docs/DEVELOPMENT_SETUP.md)
 - 🧪 [Testing & Verification Guide](docs/TESTING.md)
