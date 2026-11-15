@@ -4,6 +4,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.omnidrop.config.OmniDropProperties;
 import com.omnidrop.recovery.TransferRecoveryManager;
 import com.omnidrop.websocket.WebSocketNotificationService;
+import jakarta.annotation.PostConstruct;
+import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -32,6 +34,10 @@ public class TcpFileReceiverService {
 
     private static final Logger log = LoggerFactory.getLogger(TcpFileReceiverService.class);
 
+    // At most this many files are received at the same time.
+    // More connections wait in line instead of using up all threads.
+    private static final int MAX_CONCURRENT_RECEIVES = 16;
+
     private final OmniDropProperties properties;
     private final WebSocketNotificationService notificationService;
     private final TransferRecoveryManager recoveryManager;
@@ -51,7 +57,9 @@ public class TcpFileReceiverService {
 
     /**
      * Binds ServerSocket to port 9090 and listens for incoming connections.
+     * @PostConstruct: Spring calls this automatically when the app starts.
      */
+    @PostConstruct
     public synchronized void startServer() {
         if (running) return;
 
@@ -60,7 +68,7 @@ public class TcpFileReceiverService {
             // Core Java Networking: ServerSocket
             serverSocket = new ServerSocket(port);
             running = true;
-            connectionWorkerPool = Executors.newCachedThreadPool(r -> {
+            connectionWorkerPool = Executors.newFixedThreadPool(MAX_CONCURRENT_RECEIVES, r -> {
                 Thread t = new Thread(r, "OmniDrop-Receiver-Worker");
                 t.setDaemon(true);
                 return t;
@@ -83,6 +91,10 @@ public class TcpFileReceiverService {
         }
     }
 
+    /**
+     * @PreDestroy: Spring calls this automatically when the app stops.
+     */
+    @PreDestroy
     public synchronized void stopServer() {
         running = false;
         if (serverSocket != null && !serverSocket.isClosed()) {

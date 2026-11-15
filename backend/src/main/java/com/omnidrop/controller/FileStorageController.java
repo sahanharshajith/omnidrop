@@ -51,6 +51,36 @@ public class FileStorageController {
         return ResponseEntity.ok(filesList);
     }
 
+    /**
+     * NEW (Member 3): tells the UI where received files are saved.
+     * Read-only on purpose: the browser must not be able to choose the folder.
+     */
+    @GetMapping("/storage-info")
+    public ResponseEntity<Map<String, Object>> getStorageInfo() {
+        File downloadDir = new File(properties.getStorage().getDownloadsDir());
+        File absoluteDir = downloadDir.getAbsoluteFile();
+
+        long fileCount = 0;
+        long totalBytes = 0;
+        if (downloadDir.exists() && downloadDir.isDirectory()) {
+            File[] files = downloadDir.listFiles(f -> f.isFile() && !f.getName().endsWith(".part"));
+            if (files != null) {
+                for (File f : files) {
+                    fileCount++;
+                    totalBytes += f.length();
+                }
+            }
+        }
+
+        Map<String, Object> info = new HashMap<>();
+        info.put("downloadsDir", absoluteDir.toPath().normalize().toString());
+        info.put("fileCount", fileCount);
+        info.put("totalBytes", totalBytes);
+        // getUsableSpace() works on the folder or its closest existing parent
+        info.put("usableSpaceBytes", absoluteDir.getUsableSpace());
+        return ResponseEntity.ok(info);
+    }
+
     @GetMapping("/download/{fileName}")
     public ResponseEntity<Resource> downloadFile(@PathVariable String fileName) throws IOException {
         File downloadDir = new File(properties.getStorage().getDownloadsDir());

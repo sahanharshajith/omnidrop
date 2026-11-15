@@ -1,37 +1,173 @@
 package com.omnidrop.utils;
 
-import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.io.File;
 import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
+/**
+ * MEMBER 3: Path traversal defense and no-overwrite behaviour.
+ */
 class PathSecurityUtilsTest {
 
+    @TempDir
+    Path tempDir;
+
+    private File baseDir() {
+        return tempDir.toFile();
+    }
+
+    private Path realBase() throws IOException {
+        return tempDir.toRealPath();
+    }
+
+    private String nameOf(Path p) {
+        return p.getFileName().toString();
+    }
+
+    // ---------------------------------------------------------------
+    // Traversal attacks
+    // ---------------------------------------------------------------
+
     @Test
-    @DisplayName("Should sanitize filename and prevent path traversal escape")
-    void testPreventPathTraversal(@TempDir Path tempDir) throws IOException {
-        File baseDir = tempDir.toFile();
+    void unixTraversalIsStrippedToFileName() throws IOException {
+        Path result = PathSecurityUtils.resolveSafeDestinationPath(baseDir(), "../../../../etc/passwd");
 
-        // Malicious filenames attempting directory escape
-        String malicious1 = "../../etc/passwd";
-        String malicious2 = "..\\..\\Windows\\System32\\calc.exe";
-        String malicious3 = "normal_document.pdf";
+        assertEquals("passwd", nameOf(result));
+        assertEquals(realBase(), result.getParent());
+    }
 
-        Path safePath1 = PathSecurityUtils.resolveSafeDestinationPath(baseDir, malicious1);
-        Path safePath2 = PathSecurityUtils.resolveSafeDestinationPath(baseDir, malicious2);
-        Path safePath3 = PathSecurityUtils.resolveSafeDestinationPath(baseDir, malicious3);
+    @Test
+    void slashTraversalInUniqueMethodIsStripped() throws IOException {
+        Path result = PathSecurityUtils.resolveUniqueDestinationPath(baseDir(), "../../Windows/System32/calc.exe");
 
-        // All resolved paths MUST remain inside baseDir
-        assertTrue(safePath1.startsWith(baseDir.toPath().toRealPath()));
-        assertTrue(safePath2.startsWith(baseDir.toPath().toRealPath()));
-        assertTrue(safePath3.startsWith(baseDir.toPath().toRealPath()));
+        assertEquals("calc.exe", nameOf(result));
+        assertEquals(realBase(), result.getParent());
+    }
 
-        assertEquals("passwd", safePath1.getFileName().toString());
-        assertEquals("normal_document.pdf", safePath3.getFileName().toString());
+    @Test
+    void backslashTraversalIsStrippedOnAnyOs() throws IOException {
+        Path result = PathSecurityUtils.resolveUniqueDestinationPath(baseDir(), "..\\..\\Windows\\System32\\calc.exe");
+
+        assertEquals("calc.exe", nameOf(result));
+        assertEquals(realBase(), result.getParent());
+    }
+
+    @Test
+    void windowsAbsolutePathIsReducedToFileName() throws IOException {
+        Path result = PathSecurityUtils.resolveUniqueDestinationPath(baseDir(), "C:\\Users\\Bob\\secret.txt");
+
+        assertEquals("secret.txt", nameOf(result));
+        assertEquals(realBase(), result.getParent());
+    }
+
+    @Test
+    void unixAbsolutePathIsReducedToFileName() throws IOException {
+        Path result = PathSecurityUtils.resolveUniqueDestinationPath(baseDir(), "/etc/passwd");
+
+        assertEquals("passwd", nameOf(result));
+        assertEquals(realBase(), result.getParent());
+    }
+
+    @Test
+    void nastyNamesNeverEscapeTheDownloadsFolder() throws IOException {
+        List<String> nastyNames = List.of(
+                "../x",
+                "..\\x",
+                "....//x",
+                "/../x",
+                "a/../../b",
+                "%2e%2e/x",
+                "evil\u0000.txt",
+                "con?.txt",
+                "..",
+                "."
+        );
+
+        for (String name : nastyNames) {
+            Path result = PathSecurityUtils.resolveUniqueDestinationPath(baseDir(), name);
+            assertEquals(realBase(), result.getParent(), "Escaped the folder for name: " + name);
+        }
+    }
+
+    // ---------------------------------------------------------------
+    // Cleaning names
+    // ---------------------------------------------------------------
+
+    @Test
+    void illegalCharactersBecomeUnderscores() throws IOException {
+        Path result = PathSecurityUtils.resolveUniqueDestinationPath(baseDir(), "my file?<>.txt");
+
+        assertEquals("my_file___.txt", nameOf(result));
+    }
+
+    @Test
+    void dotOnlyNamesGetADefaultName() throws IOException {
+        for (String name : List.of("..", "...", ".")) {
+            Path result = PathSecurityUtils.resolveUniqueDestinationPath(baseDir(), name);
+
+            assertTrue(nameOf(result).startsWith("received_file_"), "Unexpected name for: " + name);
+            assertEquals(realBase(), result.getParent());
+        }
+    }
+
+    @Test
+    void nullAndBlankNamesGetADefaultName() throws IOException {
+        Path fromNull = PathSecurityUtils.resolveUniqueDestinationPath(baseDir(), null);
+        Path fromBlank = PathSecurityUtils.resolveUniqueDestinationPath(baseDir(), "   ");
+
+        assertTrue(nameOf(fromNull).startsWith("received_file_"));
+        assertTrue(nameOf(fromBlank).startsWith("received_file_"));
+    }
+
+    // ---------------------------------------------------------------
+    // No overwriting
+    // ---------------------------------------------------------------
+
+    @Test
+    void existingFileGetsNumberSuffix() throws IOException {
+        Files.writeString(tempDir.resolve("report.pdf"), "old content");
+
+        Path first = PathSecurityUtils.resolveUniqueDestinationPath(baseDir(), "report.pdf");
+        assertEquals("report_1.pdf", nameOf(first));
+
+        Files.writeString(first, "second");
+
+        Path second = PathSecurityUtils.resolveUniqueDestinationPath(baseDir(), "report.pdf");
+        assertEquals("report_2.pdf", nameOf(second));
+    }
+
+    @Test
+    void fileWithoutExtensionGetsNumberSuffix() throws IOException {
+        Files.writeString(tempDir.resolve("README"), "old");
+
+        Path result = PathSecurityUtils.resolveUniqueDestinationPath(baseDir(), "README");
+
+        assertEquals("README_1", nameOf(result));
+    }
+
+    @Test
+    void freeNameIsKeptAsIs() throws IOException {
+        Path result = PathSecurityUtils.resolveUniqueDestinationPath(baseDir(), "photo.jpg");
+
+        assertEquals("photo.jpg", nameOf(result));
+    }
+
+    @Test
+    void sameNameGivesSamePathEveryTime() throws IOException {
+        // Important for resume: the second connection must find the same ".part" file.
+        Path a = PathSecurityUtils.resolveUniqueDestinationPath(baseDir(), "video.mp4");
+        Path b = PathSecurityUtils.resolveUniqueDestinationPath(baseDir(), "video.mp4");
+
+        assertEquals(a, b);
+        assertNotEquals(null, a);
     }
 }

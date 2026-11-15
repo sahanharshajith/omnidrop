@@ -2,6 +2,7 @@ package com.omnidrop.utils;
 
 import java.io.File;
 import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 
@@ -44,5 +45,51 @@ public final class PathSecurityUtils {
         }
 
         return targetPath;
+    }
+
+    /**
+     * NEW (Member 3). Same safety as the method above, plus:
+     *  - handles both \ and / as folder separators on any OS
+     *  - never overwrites: if "report.pdf" exists, returns "report_1.pdf", "report_2.pdf", ...
+     *
+     * The numbers are the same every time (not a timestamp), so a resumed
+     * transfer finds the same ".part" file again.
+     */
+    public static Path resolveUniqueDestinationPath(File baseDir, String untrustedFilename) throws IOException {
+        String name = untrustedFilename;
+
+        if (name != null) {
+            // Keep only the part after the last / or \
+            name = name.replace('\\', '/');
+            name = name.substring(name.lastIndexOf('/') + 1);
+
+            if (name.isBlank()) {
+                // Check blank BEFORE cleaning: cleaning would turn spaces into "___"
+                name = null; // the method above will make a safe default name
+            } else {
+                // Clean bad characters BEFORE Paths.get() sees them (Windows throws on "?" or "*")
+                name = name.replaceAll("[^a-zA-Z0-9._-]", "_");
+
+                // "." and ".." and similar are not real names (dots are kept by the cleaning)
+                if (name.matches("\\.+")) {
+                    name = null;
+                }
+            }
+        }
+
+        Path target = resolveSafeDestinationPath(baseDir, name);
+
+        Path folder = target.getParent();
+        String fileName = target.getFileName().toString();
+        int dot = fileName.lastIndexOf('.');
+        String stem = dot > 0 ? fileName.substring(0, dot) : fileName;
+        String extension = dot > 0 ? fileName.substring(dot) : "";
+
+        int counter = 1;
+        while (Files.exists(target)) {
+            target = folder.resolve(stem + "_" + counter + extension);
+            counter++;
+        }
+        return target;
     }
 }

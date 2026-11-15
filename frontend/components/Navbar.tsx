@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Radio, Send, Share2, RefreshCw, LayoutDashboard, Wifi } from "lucide-react";
+import { Radio, Send, Share2, RefreshCw, LayoutDashboard, Wifi, Download } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 
 interface NavbarProps {
@@ -16,6 +16,7 @@ export function Navbar({ isWsConnected }: NavbarProps) {
     { href: "/", label: "Dashboard", icon: LayoutDashboard },
     { href: "/discovery", label: "Discovery", icon: Radio },
     { href: "/transfer", label: "Transfer", icon: Send },
+    { href: "/received", label: "Received", icon: Download },
     { href: "/distribution", label: "1-to-Many", icon: Share2 },
     { href: "/recovery", label: "Recovery", icon: RefreshCw },
   ];
