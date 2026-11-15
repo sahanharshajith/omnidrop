@@ -63,12 +63,17 @@ public final class PathSecurityUtils {
             name = name.replace('\\', '/');
             name = name.substring(name.lastIndexOf('/') + 1);
 
-            // Clean bad characters BEFORE Paths.get() sees them (Windows throws on "?" or "*")
-            name = name.replaceAll("[^a-zA-Z0-9._-]", "_");
-
-            // "", ".", ".." and similar are not real names
-            if (name.isBlank() || name.matches("\\.+")) {
+            if (name.isBlank()) {
+                // Check blank BEFORE cleaning: cleaning would turn spaces into "___"
                 name = null; // the method above will make a safe default name
+            } else {
+                // Clean bad characters BEFORE Paths.get() sees them (Windows throws on "?" or "*")
+                name = name.replaceAll("[^a-zA-Z0-9._-]", "_");
+
+                // "." and ".." and similar are not real names (dots are kept by the cleaning)
+                if (name.matches("\\.+")) {
+                    name = null;
+                }
             }
         }
 
