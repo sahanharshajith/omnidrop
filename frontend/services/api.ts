@@ -18,9 +18,9 @@ const getBaseUrl = () => {
   if (typeof window !== "undefined") {
     // When in browser, connect to host on port 8080 if not overridden
     const host = window.location.hostname;
-    return process.env.NEXT_PUBLIC_BACKEND_URL || `http://${host}:8088`;
+    return process.env.NEXT_PUBLIC_BACKEND_URL || `http://${host}:8080`;
   }
-  return process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8088";
+  return process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8080";
 };
 
 export const api = {
