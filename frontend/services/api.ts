@@ -1,12 +1,26 @@
 import { NodeHealth, PeerDevice, Checkpoint } from "@/types";
 
+// MEMBER 3: types for the received-files screen
+export interface ReceivedFile {
+  fileName: string;
+  fileSize: number;
+  lastModified: number;
+}
+
+export interface StorageInfo {
+  downloadsDir: string;
+  fileCount: number;
+  totalBytes: number;
+  usableSpaceBytes: number;
+}
+
 const getBaseUrl = () => {
   if (typeof window !== "undefined") {
     // When in browser, connect to host on port 8080 if not overridden
     const host = window.location.hostname;
-    return process.env.NEXT_PUBLIC_BACKEND_URL || `http://${host}:8080`;
+    return process.env.NEXT_PUBLIC_BACKEND_URL || `http://${host}:8088`;
   }
-  return process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8080";
+  return process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8088";
 };
 
 export const api = {
@@ -57,6 +71,32 @@ export const api = {
       body: formData,
     });
     if (!res.ok) throw new Error("Distribution initialization failed");
+    return res.json();
+  },
+
+  // ---- MEMBER 3: received files ----
+
+  async getReceivedFiles(): Promise<ReceivedFile[]> {
+    const res = await fetch(`${getBaseUrl()}/api/v1/files`);
+    if (!res.ok) throw new Error("Failed to load received files");
+    return res.json();
+  },
+
+  async deleteReceivedFile(fileName: string): Promise<void> {
+    const res = await fetch(`${getBaseUrl()}/api/v1/files/${encodeURIComponent(fileName)}`, {
+      method: "DELETE",
+    });
+    if (!res.ok) throw new Error("Failed to delete file");
+  },
+
+  // Used as a normal link: the browser downloads the file by itself
+  getDownloadUrl(fileName: string): string {
+    return `${getBaseUrl()}/api/v1/files/download/${encodeURIComponent(fileName)}`;
+  },
+
+  async getStorageInfo(): Promise<StorageInfo> {
+    const res = await fetch(`${getBaseUrl()}/api/v1/files/storage-info`);
+    if (!res.ok) throw new Error("Failed to load storage info");
     return res.json();
   },
 };
