@@ -1,8 +1,10 @@
 "use client";
 
+// @ts-expect-error Next.js processes this global stylesheet import at build time.
 import "./globals.css";
 import { Navbar } from "@/components/Navbar";
 import { MobileNav } from "@/components/MobileNav";
+import { IncomingTransferModal } from "@/components/IncomingTransferModal";
 import { useWebSocket } from "@/hooks/useWebSocket";
 
 export default function RootLayout({
@@ -25,6 +27,7 @@ export default function RootLayout({
           {children}
         </main>
         <MobileNav />
+        <IncomingTransferModal />
       </body>
     </html>
   );
