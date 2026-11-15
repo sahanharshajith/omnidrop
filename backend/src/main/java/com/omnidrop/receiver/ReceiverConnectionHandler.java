@@ -24,10 +24,11 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.net.Socket;
+import java.nio.channels.FileChannel;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
+import java.nio.file.StandardOpenOption;
 
 /**
  * MEMBER 3: Handles an individual accepted client TCP socket connection.
@@ -57,8 +58,6 @@ public class ReceiverConnectionHandler implements Runnable {
     @Override
     public void run() {
         TransferProgress progress = new TransferProgress();
-        File partFile = null;
-        File finalFile = null;
 
         try (socket;
              BufferedInputStream in = new BufferedInputStream(socket.getInputStream());
@@ -66,27 +65,28 @@ public class ReceiverConnectionHandler implements Runnable {
 
             socket.setSoTimeout(properties.getTransfer().getSocketTimeoutMs());
 
-            // 1. Receive HELLO and reply with ACK
+            // ---------------------------------------------------------------
+            // 1. HELLO -> reply ACK
+            // ---------------------------------------------------------------
             FrameHeader helloHeader = FrameDecoder.readHeader(in);
             if (helloHeader.opcode() != FrameOpcode.HELLO) {
                 FrameEncoder.writeFrame(out, FrameOpcode.ERROR, 0, "Expected HELLO".getBytes(StandardCharsets.UTF_8));
                 return;
             }
-            FrameDecoder.readPayload(in, helloHeader); // Consume HELLO payload
+            FrameDecoder.readPayload(in, helloHeader);
             FrameEncoder.writeFrame(out, FrameOpcode.ACK, 0, new byte[]{FrameConstants.PROTOCOL_VERSION});
 
-            // 2. Receive FILE_OFFER or RESUME_REQ
+            // ---------------------------------------------------------------
+            // 2. FILE_OFFER (or RESUME_REQ) -> read the file details
+            // ---------------------------------------------------------------
             FrameHeader offerHeader = FrameDecoder.readHeader(in);
             byte[] offerBytes = FrameDecoder.readPayload(in, offerHeader);
+            if (offerHeader.opcode() != FrameOpcode.FILE_OFFER
+                    && offerHeader.opcode() != FrameOpcode.RESUME_REQ) {
+                FrameEncoder.writeFrame(out, FrameOpcode.ERROR, 0, "Expected FILE_OFFER".getBytes(StandardCharsets.UTF_8));
+                return;
+            }
             FileMetadata metadata = objectMapper.readValue(offerBytes, FileMetadata.class);
-
-            // Safe path resolution (Security Defense against ../)
-            File downloadsBase = new File(properties.getStorage().getDownloadsDir());
-            Path safePath = PathSecurityUtils.resolveSafeDestinationPath(downloadsBase, metadata.getFileName());
-            finalFile = safePath.toFile();
-            // Ensure the downloads directory exists
-            finalFile.getParentFile().mkdirs();
-            partFile = new File(finalFile.getParentFile(), finalFile.getName() + ".part");
 
             progress.setTransferId(metadata.getTransferId());
             progress.setRole("RECEIVER");
@@ -97,58 +97,121 @@ public class ReceiverConnectionHandler implements Runnable {
             progress.setState(TransferState.TRANSFERRING);
             notificationService.notifyTransferStarted(progress);
 
-            // Check if resumption checkpoint exists (Member 5 coordination)
-            long startOffset = 0;
-            if (partFile.exists() && metadata.getStartOffset() > 0) {
-                startOffset = partFile.length();
+            // Basic sanity check on the numbers the sender gave us
+            long requestedOffset = metadata.getStartOffset();
+            if (metadata.getFileSize() < 0 || requestedOffset < 0 || requestedOffset > metadata.getFileSize()) {
+                reject(out, progress, "Invalid file size or start offset");
+                return;
             }
 
-            // Accept transfer
+            // ---------------------------------------------------------------
+            // 3. Decide where to save (safe path, never overwrite)
+            // ---------------------------------------------------------------
+            File downloadsBase = new File(properties.getStorage().getDownloadsDir());
+            Path safePath = PathSecurityUtils.resolveUniqueDestinationPath(downloadsBase, metadata.getFileName());
+            File finalFile = safePath.toFile();
+            File partFile = new File(finalFile.getParentFile(), finalFile.getName() + ".part");
+
+            // Is there enough free disk space for the bytes still to come?
+            long bytesStillNeeded = metadata.getFileSize() - requestedOffset;
+            if (finalFile.getParentFile().getUsableSpace() < bytesStillNeeded) {
+                reject(out, progress, "Not enough disk space on receiver");
+                return;
+            }
+
+            // ---------------------------------------------------------------
+            // 4. Resume handling: sender and receiver must agree on the offset
+            // ---------------------------------------------------------------
+            long startOffset = 0;
+            if (requestedOffset > 0) {
+                if (partFile.exists() && partFile.length() >= requestedOffset) {
+                    // Cut off any extra bytes so both sides stop at the same place
+                    try (FileChannel channel = FileChannel.open(partFile.toPath(), StandardOpenOption.WRITE)) {
+                        channel.truncate(requestedOffset);
+                    }
+                    startOffset = requestedOffset;
+                } else {
+                    reject(out, progress, "Cannot resume: partial file missing or too short");
+                    return;
+                }
+            }
+
             FrameEncoder.writeFrame(out, FrameOpcode.ACCEPT, 0, String.valueOf(startOffset).getBytes(StandardCharsets.UTF_8));
 
-            // 3. Receive Chunks and write to disk
+            // ---------------------------------------------------------------
+            // 5. Receive chunks and write them straight to the .part file
+            // ---------------------------------------------------------------
             long bytesReceived = startOffset;
+            long startTime = System.currentTimeMillis();
+            boolean finished = false;
+
             try (FileOutputStream fos = new FileOutputStream(partFile, startOffset > 0)) {
-                while (true) {
+                while (!finished) {
                     FrameHeader frame = FrameDecoder.readHeader(in);
 
                     if (frame.opcode() == FrameOpcode.FILE_CHUNK) {
                         byte[] chunkData = FrameDecoder.readPayload(in, frame);
-                        fos.write(chunkData);
                         bytesReceived += chunkData.length;
 
-                        // Acknowledge chunk
+                        // Never accept more than the sender promised
+                        if (bytesReceived > metadata.getFileSize()) {
+                            throw new IOException("Sender sent more bytes than offered");
+                        }
+
+                        fos.write(chunkData);
                         FrameEncoder.writeFrame(out, FrameOpcode.ACK, frame.chunkIndex(), new byte[0]);
 
-                        // Update progress
                         progress.setBytesTransferred(bytesReceived);
                         progress.setCurrentChunk(frame.chunkIndex());
-                        progress.setPercentage((double) bytesReceived * 100.0 / metadata.getFileSize());
+                        progress.setPercentage(metadata.getFileSize() > 0
+                                ? (double) bytesReceived * 100.0 / metadata.getFileSize()
+                                : 100.0);
 
-                        // Periodically save checkpoint
                         if (frame.chunkIndex() % 10 == 0) {
+                            // Speed and time left
+                            long elapsed = Math.max(1, System.currentTimeMillis() - startTime);
+                            double speed = ((double) (bytesReceived - startOffset) / elapsed) * 1000.0;
+                            progress.setSpeedBytesPerSec(speed);
+                            progress.setSpeedFormatted(String.format("%.2f MB/s", speed / (1024 * 1024)));
+                            progress.setEstimatedRemainingSeconds(
+                                    speed > 0 ? (metadata.getFileSize() - bytesReceived) / speed : 0);
+
                             recoveryManager.saveCheckpoint(new Checkpoint(
                                     metadata.getTransferId(), metadata.getFileName(), metadata.getFileSize(),
-                                    bytesReceived, frame.chunkIndex(), metadata.getSha256Checksum(), partFile.getAbsolutePath()
+                                    bytesReceived, frame.chunkIndex(), metadata.getSha256Checksum(),
+                                    partFile.getAbsolutePath()
                             ));
                             notificationService.notifyTransferProgress(progress);
                         }
 
                     } else if (frame.opcode() == FrameOpcode.TRANSFER_COMP) {
-                        FrameDecoder.readPayload(in, frame); // Consume TRANSFER_COMP payload
-                        fos.flush();
-                        break;
+                        FrameDecoder.readPayload(in, frame);
+                        finished = true;
+
                     } else {
-                        log.warn("Unexpected opcode during streaming: {}", frame.opcode());
-                        break;
+                        // Anything else here is a protocol error: treat as interrupted
+                        throw new IOException("Unexpected opcode during streaming: " + frame.opcode());
                     }
                 }
+            } // fos is closed here, so the file is fully written before we check it
+
+            // ---------------------------------------------------------------
+            // 6. Verify size and SHA-256
+            // ---------------------------------------------------------------
+            if (bytesReceived != metadata.getFileSize()) {
+                throw new IOException("Incomplete file: got " + bytesReceived
+                        + " of " + metadata.getFileSize() + " bytes");
             }
 
-            // 4. Validate SHA-256 Checksum on completed file
             String actualSha256 = ChecksumUtils.calculateSha256(partFile);
-            if (metadata.getSha256Checksum() != null && !metadata.getSha256Checksum().equalsIgnoreCase(actualSha256)) {
+            if (metadata.getSha256Checksum() != null
+                    && !metadata.getSha256Checksum().equalsIgnoreCase(actualSha256)) {
                 log.error("Integrity check failed! Expected={}, Actual={}", metadata.getSha256Checksum(), actualSha256);
+
+                // Remove the bad file so it cannot be resumed or opened by mistake
+                Files.deleteIfExists(partFile.toPath());
+                recoveryManager.deleteCheckpoint(metadata.getTransferId());
+
                 FrameEncoder.writeFrame(out, FrameOpcode.ERROR, 0, "SHA256 mismatch".getBytes(StandardCharsets.UTF_8));
                 progress.setState(TransferState.FAILED);
                 progress.setErrorMessage("SHA-256 integrity verification failed");
@@ -156,8 +219,10 @@ public class ReceiverConnectionHandler implements Runnable {
                 return;
             }
 
-            // 5. Finalize: Atomic rename .part -> final filename
-            Files.move(partFile.toPath(), finalFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
+            // ---------------------------------------------------------------
+            // 7. Finish: rename .part -> final name (will not overwrite)
+            // ---------------------------------------------------------------
+            Files.move(partFile.toPath(), finalFile.toPath());
             recoveryManager.deleteCheckpoint(metadata.getTransferId());
 
             FrameEncoder.writeFrame(out, FrameOpcode.ACK, metadata.getTotalChunks(), "VERIFIED".getBytes(StandardCharsets.UTF_8));
@@ -170,9 +235,21 @@ public class ReceiverConnectionHandler implements Runnable {
 
         } catch (Exception e) {
             log.error("Receiver connection interrupted: {}", e.getMessage());
-            progress.setState(TransferState.INTERRUPTED);
-            progress.setErrorMessage(e.getMessage());
-            notificationService.notifyTransferInterrupted(progress);
+            // If we never learned the transferId, there is no card in the UI to update
+            if (progress.getTransferId() != null) {
+                progress.setState(TransferState.INTERRUPTED);
+                progress.setErrorMessage(e.getMessage());
+                notificationService.notifyTransferInterrupted(progress);
+            }
         }
+    }
+
+    /** Tells the sender "no" (with a reason) and shows the failure in the UI. */
+    private void reject(BufferedOutputStream out, TransferProgress progress, String reason) throws IOException {
+        FrameEncoder.writeFrame(out, FrameOpcode.REJECT, 0, reason.getBytes(StandardCharsets.UTF_8));
+        progress.setState(TransferState.FAILED);
+        progress.setErrorMessage(reason);
+        notificationService.notifyTransferFailed(progress);
+        log.warn("Rejected transfer {}: {}", progress.getTransferId(), reason);
     }
 }
