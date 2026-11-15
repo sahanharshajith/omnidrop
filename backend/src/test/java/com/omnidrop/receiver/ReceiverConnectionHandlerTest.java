@@ -1,12 +1,8 @@
 package com.omnidrop.receiver;
 
-public class ReceiverConnectionHandlerTest {
-    
-}
-package com.omnidrop.receiver;
-
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.omnidrop.config.OmniDropProperties;
+import com.omnidrop.model.Checkpoint;
 import com.omnidrop.model.FileMetadata;
 import com.omnidrop.protocol.FrameConstants;
 import com.omnidrop.protocol.FrameDecoder;
@@ -86,8 +82,19 @@ class ReceiverConnectionHandlerTest {
         };
         notifier = new WebSocketNotificationService(recordingHandler);
 
-        // ASSUMPTION: constructor takes OmniDropProperties. Change this line if yours differs.
-        recoveryManager = new TransferRecoveryManager(properties);
+        // The receiver only calls saveCheckpoint and deleteCheckpoint.
+        // Here both do nothing, so we do not need Member 5's CheckpointStore.
+        recoveryManager = new TransferRecoveryManager(null) {
+            @Override
+            public void saveCheckpoint(Checkpoint checkpoint) {
+                // ignored in tests
+            }
+
+            @Override
+            public void deleteCheckpoint(String transferId) {
+                // ignored in tests
+            }
+        };
 
         // Port 0 = "any free port"
         server = new ServerSocket(0, 50, InetAddress.getLoopbackAddress());
