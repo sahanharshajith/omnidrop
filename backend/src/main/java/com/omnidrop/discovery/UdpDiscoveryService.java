@@ -9,10 +9,7 @@ import org.springframework.stereotype.Service;
 
 import java.net.DatagramSocket;
 import java.net.SocketException;
-import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -28,6 +25,7 @@ import java.util.concurrent.TimeUnit;
  * - Socket Timeout and Peer Heartbeat Eviction
  * ============================================================================
  */
+
 @Service
 public class UdpDiscoveryService {
 
@@ -35,7 +33,7 @@ public class UdpDiscoveryService {
 
     private final OmniDropProperties properties;
     private final WebSocketNotificationService notificationService;
-    private final Map<String, PeerDevice> activePeers = new ConcurrentHashMap<>();
+    private final PeerRegistry registry = new PeerRegistry();
 
     private DatagramSocket broadcastSocket;
     private DatagramSocket listenerSocket;
@@ -105,39 +103,36 @@ public class UdpDiscoveryService {
      * Called by UdpPacketListener when a valid beacon datagram is decoded.
      */
     public void registerPeer(PeerDevice peer) {
-        // Suppress self-loopback beacon
+        //if we get our beacon this ignores it
         if (peer.getDeviceId().equals(properties.getNode().getId())) {
             return;
         }
 
-        PeerDevice existing = activePeers.put(peer.getDeviceId(), peer);
-        if (existing == null) {
+        PeerRegistry.Result result = registry.upsert(peer);
+
+        if (result == PeerRegistry.Result.NEW) {
             log.info("Discovered new peer: {} ({}:{})", peer.getDeviceName(), peer.getIpAddress(), peer.getTcpPort());
             notificationService.notifyPeerDiscovered(peer);
-        } else {
-            existing.setLastSeenTimestamp(System.currentTimeMillis());
+        } else if (result == PeerRegistry.Result.UPDATED) {
+            log.info("Peer changed: {} is now at {}:{}", peer.getDeviceName(), peer.getIpAddress(), peer.getTcpPort());
+            notificationService.notifyPeerDiscovered(peer);
         }
+        //REFRESHED is just a heartbeat, nothing to tell the UI
     }
 
     /**
      * Evicts peers that have timed out without sending recent heartbeats.
      */
     private void evictStalePeers() {
-        long now = System.currentTimeMillis();
         long timeout = properties.getNetwork().getPeerTimeoutMs();
-
-        activePeers.entrySet().removeIf(entry -> {
-            boolean stale = (now - entry.getValue().getLastSeenTimestamp()) > timeout;
-            if (stale) {
-                log.info("Peer timed out: {} ({})", entry.getValue().getDeviceName(), entry.getKey());
-                notificationService.notifyPeerLost(entry.getKey());
-            }
-            return stale;
-        });
+        for (PeerDevice peer : registry.evictStale(timeout)) {
+            log.info("Peer timed out: {} ({})", peer.getDeviceName(), peer.getDeviceId());
+            notificationService.notifyPeerLost(peer.getDeviceId());
+        }
     }
 
     public List<PeerDevice> getActivePeers() {
-        return new ArrayList<>(activePeers.values());
+        return registry.snapshot();
     }
 
     /**
