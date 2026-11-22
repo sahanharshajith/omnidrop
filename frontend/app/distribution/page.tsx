@@ -1,36 +1,60 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { PeerDevice } from "@/types";
+import { DistributionProgress, PeerDevice } from "@/types";
 import { api } from "@/services/api";
-import { useWebSocket } from "@/hooks/useWebSocket";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { formatBytes } from "@/lib/utils";
-import { Share2, Users, Upload, CheckCircle2, AlertCircle, Info, CheckSquare, Square } from "lucide-react";
+import { Share2, Users, Upload, AlertCircle, Info, CheckSquare, Square } from "lucide-react";
 
 export default function DistributionPage() {
   const [peers, setPeers] = useState<PeerDevice[]>([]);
   const [selectedPeerIds, setSelectedPeerIds] = useState<Set<string>>(new Set());
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [distributionSummary, setDistributionSummary] = useState<any | null>(null);
+  const [distributionId, setDistributionId] = useState<string | null>(null);
+  const [distributionSummary, setDistributionSummary] = useState<DistributionProgress | null>(null);
+  const [progressError, setProgressError] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-
-  const { lastMessage } = useWebSocket();
 
   useEffect(() => {
     api.getDevices().then(setPeers).catch(console.warn);
   }, []);
 
   useEffect(() => {
-    if (!lastMessage) return;
-    if (lastMessage.type === "DISTRIBUTION_PROGRESS") {
-      setDistributionSummary(lastMessage.payload);
+    if (!distributionId) return;
+    const id = distributionId;
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout>;
+
+    async function refresh() {
+      try {
+        const progress = await api.getDistributionProgress(id, controller.signal);
+        if (controller.signal.aborted) return;
+        setDistributionSummary(progress);
+        setProgressError(false);
+        if (progress.status !== "IN_PROGRESS") return;
+      } catch {
+        if (controller.signal.aborted) return;
+        setProgressError(true);
+      }
+      timer = setTimeout(refresh, 500);
     }
-  }, [lastMessage]);
+
+    void refresh();
+    return () => {
+      controller.abort();
+      clearTimeout(timer);
+    };
+  }, [distributionId]);
+
+  const aggregatePercent = distributionSummary
+    ? Math.round(100 * distributionSummary.bytesTransferred /
+        (distributionSummary.fileSize * distributionSummary.totalReceivers))
+    : 0;
 
   const toggleSelectPeer = (deviceId: string) => {
     setSelectedPeerIds((prev) => {
@@ -64,7 +88,10 @@ export default function DistributionPage() {
 
     try {
       const targets = peers.filter((p) => selectedPeerIds.has(p.deviceId));
-      await api.startDistribution(selectedFile, targets);
+      const result = await api.startDistribution(selectedFile, targets);
+      setDistributionSummary(null);
+      setProgressError(false);
+      setDistributionId(result.distributionId);
       setSelectedFile(null);
     } catch (e: any) {
       setErrorMessage(e.message || "Failed to start distribution");
@@ -195,10 +222,11 @@ export default function DistributionPage() {
         {/* Live Distribution Progress Column */}
         <div className="space-y-4">
           <h3 className="text-base font-bold text-slate-900">Concurrent Distribution Status</h3>
+          {progressError && <p role="status" className="text-xs text-rose-700">Progress unavailable. Retrying…</p>}
           {!distributionSummary ? (
             <div className="rounded-xl border border-dashed border-slate-300 bg-white p-8 text-center">
               <Users className="mx-auto h-8 w-8 text-slate-400" />
-              <p className="mt-2 text-xs text-slate-500">Distribution batches will display live progress here.</p>
+              <p className="mt-2 text-xs text-slate-500">{distributionId ? "Loading distribution status…" : "Distribution batches will display live progress here."}</p>
             </div>
           ) : (
             <Card className="border-indigo-200">
@@ -207,7 +235,7 @@ export default function DistributionPage() {
                   <CardTitle className="text-base font-bold text-slate-900">
                     Distribution: {distributionSummary.fileName}
                   </CardTitle>
-                  <Badge variant={distributionSummary.failedReceivers === 0 ? "success" : "warning"}>
+                  <Badge variant={distributionSummary.status === "SUCCESS" ? "success" : "outline"}>
                     {distributionSummary.status}
                   </Badge>
                 </div>
@@ -233,13 +261,28 @@ export default function DistributionPage() {
 
                 <div className="space-y-1">
                   <div className="flex justify-between text-xs text-slate-500">
-                    <span>Aggregate Completion</span>
+                    <span>Total bytes delivered</span>
                     <span className="font-semibold text-slate-900">
-                      {Math.round((distributionSummary.completedReceivers / distributionSummary.totalReceivers) * 100)}%
+                      {aggregatePercent}%
                     </span>
                   </div>
-                  <Progress value={(distributionSummary.completedReceivers / distributionSummary.totalReceivers) * 100} />
+                  <Progress aria-label="Total bytes delivered" value={aggregatePercent} />
                 </div>
+                <ul className="space-y-3">
+                  {distributionSummary.receivers.map((receiver, index) => {
+                    const percent = Math.round(100 * receiver.bytesTransferred / distributionSummary.fileSize);
+                    return (
+                      <li key={index} className="space-y-1 border-t border-slate-100 pt-3">
+                        <div className="flex justify-between gap-2 text-xs">
+                          <span className="font-semibold">{receiver.deviceName}</span>
+                          <span>{receiver.state} · {percent}%</span>
+                        </div>
+                        <Progress aria-label={receiver.deviceName} value={percent} />
+                        {receiver.errorMessage && <p className="text-xs text-rose-700">{receiver.errorMessage}</p>}
+                      </li>
+                    );
+                  })}
+                </ul>
               </CardContent>
             </Card>
           )}

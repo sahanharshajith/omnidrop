@@ -3,6 +3,7 @@ package com.omnidrop.sender;
 import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
 import java.io.File;
+import java.util.function.LongConsumer;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.net.InetSocketAddress;
@@ -124,6 +125,16 @@ public class TcpFileSenderService {
             File file,
             long startOffset) throws IOException {
 
+        return sendFileInternal(transferId, targetPeer, file, startOffset, bytes -> {});
+    }
+
+    public TransferProgress sendFile(PeerDevice peer, File file, LongConsumer acknowledged)
+            throws IOException {
+        return sendFileInternal(UUID.randomUUID().toString(), peer, file, 0, acknowledged);
+    }
+
+    private TransferProgress sendFileInternal(String transferId, PeerDevice targetPeer, File file, long startOffset,
+                                              LongConsumer acknowledged) throws IOException {
         long fileSize = file.length();
 
         int chunkSize =
@@ -261,7 +272,8 @@ public class TcpFileSenderService {
                         out,
                         in,
                         progress,
-                        ctx
+                        ctx,
+                        acknowledged
                 );
 
                 // Step 5: Send TRANSFER_COMP
@@ -358,7 +370,7 @@ public class TcpFileSenderService {
             BufferedOutputStream out,
             BufferedInputStream in,
             TransferProgress progress,
-            TransferContext ctx) throws IOException {
+            TransferContext ctx, LongConsumer acknowledged) throws IOException {
 
         byte[] buffer = new byte[metadata.getChunkSize()];
 
@@ -420,6 +432,7 @@ public class TcpFileSenderService {
                 }
 
                 bytesSent += read;
+                acknowledged.accept(bytesSent);
 
                 progress.setBytesTransferred(bytesSent);
                 progress.setCurrentChunk(chunkIndex);
