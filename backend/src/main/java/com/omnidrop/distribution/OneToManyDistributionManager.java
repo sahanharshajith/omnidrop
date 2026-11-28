@@ -1,103 +1,113 @@
 package com.omnidrop.distribution;
 
 import com.omnidrop.model.PeerDevice;
-import com.omnidrop.model.TransferProgress;
+import com.omnidrop.model.TransferState;
 import com.omnidrop.sender.TcpFileSenderService;
 import com.omnidrop.websocket.WebSocketNotificationService;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import jakarta.annotation.PreDestroy;
 import org.springframework.stereotype.Service;
 
 import java.io.File;
-import java.util.ArrayList;
-import java.util.HashMap;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
+import java.util.concurrent.atomic.AtomicReferenceArray;
+import java.util.stream.IntStream;
 
-/**
- * ============================================================================
- * MEMBER 4 RESPONSIBILITY: One-to-Many Distribution Module
- * ============================================================================
- * Concepts:
- * - java.util.concurrent.ExecutorService (Thread pool management)
- * - Concurrent TCP connections to multiple distinct receiver devices
- * - Thread isolation: Slow/faulty receiver does not terminate other transfers
- * - Aggregation of distribution progress published via WebSockets
- * ============================================================================
- */
 @Service
 public class OneToManyDistributionManager {
+    private final TcpFileSenderService sender;
+    private final WebSocketNotificationService notifications;
+    private final ExecutorService workers = Executors.newFixedThreadPool(8);
+    private final Map<String, Batch> batches = new ConcurrentHashMap<>();
 
-    private static final Logger log = LoggerFactory.getLogger(OneToManyDistributionManager.class);
-
-    private final TcpFileSenderService senderService;
-    private final WebSocketNotificationService notificationService;
-    private final ExecutorService distributionPool;
-
-    public OneToManyDistributionManager(TcpFileSenderService senderService,
-                                        WebSocketNotificationService notificationService) {
-        this.senderService = senderService;
-        this.notificationService = notificationService;
-        // Bounded thread pool preventing resource exhaustion
-        this.distributionPool = Executors.newFixedThreadPool(8, r -> {
-            Thread t = new Thread(r, "OmniDrop-Distribution-Worker");
-            t.setDaemon(true);
-            return t;
-        });
+    public OneToManyDistributionManager(TcpFileSenderService sender, WebSocketNotificationService notifications) {
+        this.sender = sender;
+        this.notifications = notifications;
     }
 
-    /**
-     * Concurrently distributes a single file to a list of target peer devices.
-     */
     public String distributeFileConcurrently(File file, List<PeerDevice> targets) {
-        String distributionId = "dist-" + UUID.randomUUID().toString().substring(0, 8);
-        log.info("Starting One-to-Many distribution [{}] for file '{}' to {} receivers",
-                distributionId, file.getName(), targets.size());
+        Instant cutoff = Instant.now().minusSeconds(900);
+        batches.values().removeIf(batch -> batch.finishedAt.isBefore(cutoff));
 
-        List<Future<TransferProgress>> futures = new ArrayList<>();
-
-        for (PeerDevice target : targets) {
-            ConcurrentTransferWorker worker = new ConcurrentTransferWorker(target, file, senderService);
-            futures.add(distributionPool.submit(worker));
+        String id = "dist-" + UUID.randomUUID();
+        Batch batch = new Batch(id, file, targets);
+        batches.put(id, batch);
+        CompletableFuture<?>[] tasks = new CompletableFuture<?>[targets.size()];
+        for (int i = 0; i < targets.size(); i++) {
+            int slot = i;
+            PeerDevice target = targets.get(slot);
+            tasks[slot] = CompletableFuture.runAsync(() -> {
+                batch.update(slot, 0, TransferState.CONNECTING, null);
+                var worker = new ConcurrentTransferWorker(target, file, sender,
+                        bytes -> batch.update(slot, bytes, TransferState.TRANSFERRING, null));
+                var result = worker.call();
+                batch.update(slot, Math.max(result.getBytesTransferred(), batch.receivers.get(slot).bytesTransferred()),
+                        result.getState(), result.getErrorMessage());
+            }, workers);
         }
-
-        // Asynchronously monitor aggregate completion
-        distributionPool.submit(() -> monitorDistribution(distributionId, file.getName(), targets, futures));
-
-        return distributionId;
+        CompletableFuture.allOf(tasks).thenRun(() -> {
+            batch.finishedAt = Instant.now();
+            notifications.notifyDistributionProgress(batch.snapshot());
+        });
+        return id;
     }
 
-    private void monitorDistribution(String distributionId, String fileName, List<PeerDevice> targets, List<Future<TransferProgress>> futures) {
-        int total = targets.size();
-        int completed = 0;
-        int failed = 0;
+    public Map<String, Object> getProgress(String id) {
+        Batch batch = batches.get(id);
+        return batch == null ? null : batch.snapshot();
+    }
 
-        for (Future<TransferProgress> f : futures) {
-            try {
-                TransferProgress progress = f.get();
-                if (progress != null && progress.getErrorMessage() == null) {
-                    completed++;
-                } else {
-                    failed++;
-                }
-            } catch (Exception e) {
-                failed++;
-            }
+    @PreDestroy
+    void shutdown() {
+        workers.shutdownNow();
+    }
+
+    public record ReceiverProgress(String deviceId, String deviceName, long bytesTransferred,
+                                   TransferState state, String errorMessage) {}
+
+    private static class Batch {
+        private final String id;
+        private final String fileName;
+        private final long fileSize;
+        private final AtomicReferenceArray<ReceiverProgress> receivers;
+        private volatile Instant finishedAt = Instant.MAX;
+
+        Batch(String id, File file, List<PeerDevice> targets) {
+            this.id = id;
+            fileName = file.getName();
+            fileSize = file.length();
+            receivers = new AtomicReferenceArray<>(targets.stream()
+                    .map(peer -> new ReceiverProgress(peer.getDeviceId(), peer.getDeviceName(), 0,
+                            TransferState.PENDING, null))
+                    .toArray(ReceiverProgress[]::new));
         }
 
-        Map<String, Object> summary = new HashMap<>();
-        summary.put("distributionId", distributionId);
-        summary.put("fileName", fileName);
-        summary.put("totalReceivers", total);
-        summary.put("completedReceivers", completed);
-        summary.put("failedReceivers", failed);
-        summary.put("status", failed == 0 ? "SUCCESS" : "PARTIAL_SUCCESS");
+        void update(int slot, long bytes, TransferState state, String error) {
+            ReceiverProgress previous = receivers.get(slot);
+            receivers.set(slot, new ReceiverProgress(previous.deviceId(), previous.deviceName(), bytes, state, error));
+        }
 
-        log.info("One-to-Many distribution [{}] completed: {} success, {} failed", distributionId, completed, failed);
-        notificationService.notifyDistributionProgress(summary);
+        Map<String, Object> snapshot() {
+            List<ReceiverProgress> rows = IntStream.range(0, receivers.length()).mapToObj(receivers::get).toList();
+            long completed = rows.stream().filter(row -> row.state() == TransferState.COMPLETED).count();
+            long failed = rows.stream().filter(row -> switch (row.state()) {
+                case FAILED, INTERRUPTED, CANCELLED -> true;
+                default -> false;
+            }).count();
+            String status = "IN_PROGRESS";
+            if (completed + failed == rows.size()) {
+                status = failed == 0 ? "SUCCESS" : completed == 0 ? "FAILED" : "PARTIAL_SUCCESS";
+            }
+            return Map.of("distributionId", id, "fileName", fileName, "fileSize", fileSize,
+                    "totalReceivers", rows.size(), "completedReceivers", completed, "failedReceivers", failed,
+                    "status", status, "receivers", rows,
+                    "bytesTransferred", rows.stream().mapToLong(ReceiverProgress::bytesTransferred).sum());
+        }
     }
 }

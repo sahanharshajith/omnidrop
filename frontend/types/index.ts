@@ -62,3 +62,21 @@ export interface WebSocketEvent<T = unknown> {
   timestamp: number;
   payload: T;
 }
+
+export interface DistributionProgress {
+  distributionId: string;
+  fileName: string;
+  fileSize: number;
+  totalReceivers: number;
+  completedReceivers: number;
+  failedReceivers: number;
+  bytesTransferred: number;
+  status: 'IN_PROGRESS' | 'SUCCESS' | 'FAILED' | 'PARTIAL_SUCCESS';
+  receivers: {
+    deviceId: string;
+    deviceName: string;
+    bytesTransferred: number;
+    state: TransferState;
+    errorMessage?: string;
+  }[];
+}

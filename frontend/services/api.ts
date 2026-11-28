@@ -1,4 +1,4 @@
-import { NodeHealth, PeerDevice, Checkpoint } from "@/types";
+import { NodeHealth, PeerDevice, Checkpoint, DistributionProgress } from "@/types";
 
 // MEMBER 3: types for the received-files screen
 export interface ReceivedFile {
@@ -61,7 +61,7 @@ export const api = {
     return res.json();
   },
 
-  async startDistribution(file: File, targets: PeerDevice[]) {
+  async startDistribution(file: File, targets: PeerDevice[]): Promise<{ distributionId: string }> {
     const formData = new FormData();
     formData.append("file", file);
     formData.append("targetsJson", JSON.stringify(targets));
@@ -71,6 +71,15 @@ export const api = {
       body: formData,
     });
     if (!res.ok) throw new Error("Distribution initialization failed");
+    return res.json();
+  },
+
+  async getDistributionProgress(id: string, signal: AbortSignal): Promise<DistributionProgress> {
+    const res = await fetch(`${getBaseUrl()}/api/v1/distribution/${encodeURIComponent(id)}`, {
+      signal,
+      cache: "no-store",
+    });
+    if (!res.ok) throw new Error("Unable to load distribution progress");
     return res.json();
   },
 
