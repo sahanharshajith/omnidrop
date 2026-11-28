@@ -61,6 +61,8 @@ public class UdpDiscoveryService {
             // Listener socket bound to UDP port
             listenerSocket = new DatagramSocket(udpPort);
             listenerSocket.setBroadcast(true);
+            // receive() gives up after 1 second so the listener thread can check if we stopped
+            listenerSocket.setSoTimeout(1000);
 
             running = true;
             scheduler = Executors.newScheduledThreadPool(2, r -> {
