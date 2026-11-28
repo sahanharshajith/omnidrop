@@ -3,11 +3,14 @@ package com.omnidrop.discovery;
 import com.omnidrop.config.OmniDropProperties;
 import com.omnidrop.model.PeerDevice;
 import com.omnidrop.websocket.WebSocketNotificationService;
+import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.net.DatagramSocket;
+import java.net.InetSocketAddress;
 import java.net.SocketException;
 import java.util.List;
 import java.util.concurrent.Executors;
@@ -31,18 +34,27 @@ public class UdpDiscoveryService {
 
     private static final Logger log = LoggerFactory.getLogger(UdpDiscoveryService.class);
 
+    // How long receive() waits before giving up, so the listener can notice stop()
+    static final int LISTENER_TIMEOUT_MS = 1000;
+
     private final OmniDropProperties properties;
     private final WebSocketNotificationService notificationService;
+    private final int httpPort;
     private final PeerRegistry registry = new PeerRegistry();
 
     private DatagramSocket broadcastSocket;
     private DatagramSocket listenerSocket;
     private volatile boolean running = false;
+    private volatile String lastError;
     private ScheduledExecutorService scheduler;
+    private Thread listenerThread;
 
-    public UdpDiscoveryService(OmniDropProperties properties, WebSocketNotificationService notificationService) {
+    public UdpDiscoveryService(OmniDropProperties properties,
+                               WebSocketNotificationService notificationService,
+                               @Value("${server.port:8080}") int httpPort) {
         this.properties = properties;
         this.notificationService = notificationService;
+        this.httpPort = httpPort;
     }
 
     /**
@@ -51,54 +63,92 @@ public class UdpDiscoveryService {
     public synchronized void start() {
         if (running) return;
 
+        int udpPort = properties.getNetwork().getUdpPort();
         try {
-            int udpPort = properties.getNetwork().getUdpPort();
-
             // Sockets initialized using java.net.DatagramSocket
             broadcastSocket = new DatagramSocket();
             broadcastSocket.setBroadcast(true);
 
-            // Listener socket bound to UDP port
-            listenerSocket = new DatagramSocket(udpPort);
+            // Listener socket: create unbound, allow address reuse, then bind to the UDP port.
+            // Reuse avoids "Address already in use" when the backend is restarted quickly.
+            listenerSocket = new DatagramSocket(null);
+            listenerSocket.setReuseAddress(true);
             listenerSocket.setBroadcast(true);
+            listenerSocket.bind(new InetSocketAddress(udpPort));
             // receive() gives up after 1 second so the listener thread can check if we stopped
-            listenerSocket.setSoTimeout(1000);
+            listenerSocket.setSoTimeout(LISTENER_TIMEOUT_MS);
 
             running = true;
+            lastError = null;
             scheduler = Executors.newScheduledThreadPool(2, r -> {
                 Thread t = new Thread(r, "OmniDrop-UDP-Discovery");
                 t.setDaemon(true);
                 return t;
             });
 
-            // Start UDP Packet Listener thread
+            // Start UDP Packet Listener thread (daemon, so it never keeps the JVM alive)
             UdpPacketListener packetListener = new UdpPacketListener(listenerSocket, properties, this);
-            new Thread(packetListener, "OmniDrop-UDP-Listener").start();
+            listenerThread = new Thread(packetListener, "OmniDrop-UDP-Listener");
+            listenerThread.setDaemon(true);
+            listenerThread.start();
 
             // Schedule periodic broadcast beacons
-            UdpBeaconBroadcaster broadcaster = new UdpBeaconBroadcaster(broadcastSocket, properties);
+            UdpBeaconBroadcaster broadcaster = new UdpBeaconBroadcaster(broadcastSocket, properties, httpPort);
             scheduler.scheduleAtFixedRate(broadcaster, 0, properties.getNetwork().getBroadcastIntervalMs(), TimeUnit.MILLISECONDS);
 
             // Schedule stale peer eviction cleaner
             scheduler.scheduleAtFixedRate(this::evictStalePeers, 5, 5, TimeUnit.SECONDS);
 
-            log.info("UDP Discovery Service started on port {}", udpPort);
+            log.info("UDP Discovery Service started on port {}", getBoundPort());
 
         } catch (SocketException e) {
-            log.error("Failed to start UDP Discovery Service on port {}: {}", properties.getNetwork().getUdpPort(), e.getMessage());
+            lastError = "Could not open UDP port " + udpPort + ": " + e.getMessage();
+            log.error("Failed to start UDP Discovery Service on port {}: {}", udpPort, e.getMessage());
+            closeSockets();
         }
     }
 
+    /**
+     * Stops broadcasting and listening. Called automatically when Spring shuts down.
+     */
+    @PreDestroy
     public synchronized void stop() {
+        if (!running && scheduler == null) return;
         running = false;
-        if (scheduler != null) scheduler.shutdownNow();
+        if (scheduler != null) {
+            scheduler.shutdownNow();
+            scheduler = null;
+        }
+        closeSockets();
+        if (listenerThread != null) {
+            try {
+                listenerThread.join(LISTENER_TIMEOUT_MS * 2L);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            listenerThread = null;
+        }
+        log.info("UDP Discovery Service stopped.");
+    }
+
+    private void closeSockets() {
         if (broadcastSocket != null && !broadcastSocket.isClosed()) broadcastSocket.close();
         if (listenerSocket != null && !listenerSocket.isClosed()) listenerSocket.close();
-        log.info("UDP Discovery Service stopped.");
     }
 
     public boolean isRunning() {
         return running;
+    }
+
+    /** Why discovery could not start (e.g. port in use), or null when it is fine. */
+    public String getLastError() {
+        return lastError;
+    }
+
+    /** The UDP port the listener is actually bound to, or -1 when not running. */
+    public int getBoundPort() {
+        return listenerSocket != null && listenerSocket.isBound() && !listenerSocket.isClosed()
+                ? listenerSocket.getLocalPort() : -1;
     }
 
     /**
@@ -125,7 +175,7 @@ public class UdpDiscoveryService {
     /**
      * Evicts peers that have timed out without sending recent heartbeats.
      */
-    private void evictStalePeers() {
+    void evictStalePeers() {
         long timeout = properties.getNetwork().getPeerTimeoutMs();
         for (PeerDevice peer : registry.evictStale(timeout)) {
             log.info("Peer timed out: {} ({})", peer.getDeviceName(), peer.getDeviceId());
@@ -142,7 +192,7 @@ public class UdpDiscoveryService {
      */
     public void triggerManualBroadcast() {
         if (broadcastSocket != null && !broadcastSocket.isClosed()) {
-            new UdpBeaconBroadcaster(broadcastSocket, properties).run();
+            new UdpBeaconBroadcaster(broadcastSocket, properties, httpPort).run();
         }
     }
 }

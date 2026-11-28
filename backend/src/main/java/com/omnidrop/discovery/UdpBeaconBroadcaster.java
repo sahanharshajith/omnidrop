@@ -23,11 +23,13 @@ public class UdpBeaconBroadcaster implements Runnable {
 
     private final DatagramSocket socket;
     private final OmniDropProperties properties;
+    private final int httpPort;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
-    public UdpBeaconBroadcaster(DatagramSocket socket, OmniDropProperties properties) {
+    public UdpBeaconBroadcaster(DatagramSocket socket, OmniDropProperties properties, int httpPort) {
         this.socket = socket;
         this.properties = properties;
+        this.httpPort = httpPort;
     }
 
     @Override
@@ -41,7 +43,7 @@ public class UdpBeaconBroadcaster implements Runnable {
             beaconPayload.put("deviceId", properties.getNode().getId());
             beaconPayload.put("deviceName", properties.getNode().getName());
             beaconPayload.put("tcpPort", properties.getNetwork().getTcpPort());
-            beaconPayload.put("httpPort", 8080);
+            beaconPayload.put("httpPort", httpPort);
             beaconPayload.put("timestamp", System.currentTimeMillis());
 
             byte[] data = objectMapper.writeValueAsString(beaconPayload).getBytes(StandardCharsets.UTF_8);

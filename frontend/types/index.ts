@@ -54,6 +54,8 @@ export interface NodeHealth {
   tcpPort: number;
   udpPort: number;
   ipAddresses: string[];
+  discoveryRunning?: boolean;
+  discoveryError?: string | null;
   timestamp: number;
 }
 
