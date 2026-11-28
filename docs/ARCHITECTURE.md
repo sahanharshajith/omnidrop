@@ -84,11 +84,23 @@ The Java backend (`com.omnidrop`) is structured into clean, decoupled modules de
 ```mermaid
 classDiagram
     class UdpDiscoveryService {
-        -DatagramSocket socket
-        -boolean running
-        +startDiscovery()
-        +broadcastBeacon()
-        +getDiscoveredPeers() List~PeerDevice~
+        -DatagramSocket listenerSocket
+        -DatagramSocket broadcastSocket
+        -PeerRegistry registry
+        +start()
+        +stop()
+        +registerPeer(PeerDevice)
+        +unregisterPeer(deviceId)
+        +triggerManualBroadcast()
+        +getActivePeers() List~PeerDevice~
+    }
+
+    class PeerRegistry {
+        -Map~String, PeerDevice~ peers
+        +upsert(PeerDevice) Result
+        +evictStale(timeoutMs) List~PeerDevice~
+        +remove(deviceId)
+        +snapshot() List~PeerDevice~
     }
 
     class TcpFileSenderService {
@@ -129,6 +141,7 @@ classDiagram
     TcpFileSenderService ..> WebSocketNotificationService : emits progress
     TcpFileReceiverService ..> WebSocketNotificationService : emits progress
     UdpDiscoveryService ..> WebSocketNotificationService : emits peer status
+    UdpDiscoveryService --> PeerRegistry : stores peers
 ```
 
 ---

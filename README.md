@@ -134,6 +134,8 @@ You can easily run both services in containers:
 docker compose up --build
 ```
 
+> **Note on device discovery in Docker:** the compose file uses a bridge network, and UDP broadcasts from inside a bridge network do not reach the real LAN. For multi-device demos run the backend natively (`mvn spring-boot:run`). On Linux you can instead set `network_mode: host` on the backend service; Docker Desktop on Windows/macOS does not support this the same way.
+
 ---
 
 ## 8. Offline Multi-Device Testing

@@ -29,7 +29,7 @@ All messages sent over the WebSocket channel use a standard envelope format:
 ## 3. Server-to-Client Events (Backend -> Frontend)
 
 ### 3.1 `DEVICE_DISCOVERED`
-Emitted by the UDP Discovery Service when a new peer broadcast is received.
+Emitted by the UDP Discovery Service when a new peer is found, **and again when a known peer's IP address, name or TCP port changes** (clients should treat it as an upsert by `deviceId`). The payload is the backend `PeerDevice`.
 ```json
 {
   "type": "DEVICE_DISCOVERED",
@@ -40,14 +40,14 @@ Emitted by the UDP Discovery Service when a new peer broadcast is received.
     "ipAddress": "192.168.1.105",
     "tcpPort": 9090,
     "httpPort": 8080,
-    "status": "ONLINE",
-    "lastSeen": 1731254401000
+    "lastSeenTimestamp": 1731254401000,
+    "active": true
   }
 }
 ```
 
 ### 3.2 `DEVICE_LOST`
-Emitted when a peer has not broadcast a heartbeat within 15 seconds.
+Emitted when a peer has not broadcast a heartbeat within 12 seconds, or immediately when it sends a `LEAVE` beacon on shutdown.
 ```json
 {
   "type": "DEVICE_LOST",

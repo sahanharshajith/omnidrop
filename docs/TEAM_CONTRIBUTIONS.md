@@ -24,7 +24,7 @@ Every member of the group is allocated **at least one genuine, mandatory Java ne
   - Bind `DatagramSocket` to port `8888` and set `setBroadcast(true)`.
   - Iterate active network interfaces to broadcast beacons across valid IPv4 subnets.
   - Implement a dedicated background daemon listening for incoming datagrams with timeout handling.
-  - Maintain an in-memory `PeerRegistry` with automated expiration of inactive nodes (after 10s).
+  - Maintain an in-memory `PeerRegistry` with automated expiration of inactive nodes (after 12s) and immediate removal on a LEAVE beacon.
 - **Frontend & Integration**:
   - Build the reactive Device Discovery radar and table showing discovered peers with signal/status indicators.
   - Connect discovery events with the WebSocket channel to notify the frontend when peers join or leave.

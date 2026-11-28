@@ -13,7 +13,9 @@ This document defines the exact on-the-wire protocols used by OmniDrop:
 - **Transport**: UDP (`DatagramSocket`, `DatagramPacket`)
 - **Broadcast Address**: `255.255.255.255` (and interface-specific subnet broadcasts)
 - **Interval**: Nodes broadcast their presence every 3 seconds.
-- **Node Expiry**: Any peer unseen for 10 seconds is flagged inactive and removed.
+- **Node Expiry**: Any peer unseen for 12 seconds (4 missed beacons, `omnidrop.network.peer-timeout-ms`) is removed and a `DEVICE_LOST` event is sent. The registry is checked every 5 seconds.
+- **Graceful Leave**: A node that shuts down sends one beacon with `"event": "LEAVE"` so peers remove it immediately.
+- **Receive Timeout**: The listener socket uses `setSoTimeout(1000)`; a `SocketTimeoutException` simply re-checks whether the service is still running.
 
 ### 1.2 Beacon Payload Format (JSON over UDP)
 To ensure broad cross-platform interoperability, UDP discovery datagrams transmit a compact JSON packet:
@@ -26,14 +28,28 @@ To ensure broad cross-platform interoperability, UDP discovery datagrams transmi
   "deviceName": "Alice-ThinkPad",
   "tcpPort": 9090,
   "httpPort": 8080,
-  "timestamp": 1731254400000
+  "timestamp": 1731254400000,
+  "event": "ALIVE"
 }
 ```
 
+`event` is `"ALIVE"` for the periodic heartbeat and `"LEAVE"` when the node is shutting down. A beacon without `event` is treated as `ALIVE` (backward compatible). `httpPort` is the node's real `server.port`.
+
+Encoding and decoding live in `BeaconCodec` (`DiscoveryBeacon` record); the listener and broadcaster only deal with sockets.
+
 ### 1.3 Validation Rules
-1. Packets without `"magic": "OMNI_DISCOVER"` MUST be discarded immediately.
-2. Receiver obtains the sender's real IP address directly from `DatagramPacket.getAddress().getHostAddress()`.
-3. If `deviceId` matches the local node's own ID, the packet is ignored (self-loopback suppression).
+A datagram is silently dropped (logged at `DEBUG`) unless **all** of these hold:
+1. It is a JSON object with `"magic": "OMNI_DISCOVER"`.
+2. `version` is `1`.
+3. `deviceId` and `deviceName` are present and not blank.
+4. `tcpPort` (and `httpPort`, default 8080) is between 1 and 65535.
+5. `event`, if present, is `ALIVE` or `LEAVE`.
+6. The datagram is smaller than the 4096-byte receive buffer (a full buffer may be truncated).
+
+After validation:
+- The sender's real IP address is taken from `DatagramPacket.getAddress().getHostAddress()`, never from the JSON.
+- If `deviceId` matches the local node's own ID, the packet is ignored (self-loopback suppression).
+- `PeerRegistry.upsert` classifies the beacon as `NEW`, `UPDATED` (IP, name or TCP port changed) or `REFRESHED` (heartbeat only). `NEW` and `UPDATED` emit `DEVICE_DISCOVERED`; `REFRESHED` emits nothing.
 
 ---
 

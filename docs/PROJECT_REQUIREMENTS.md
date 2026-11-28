@@ -16,7 +16,7 @@ Transferring files between devices is difficult or impossible when internet conn
 ### FR2: Dynamic UDP Device Discovery
 - Nodes must announce their presence on the local subnet by broadcasting UDP discovery beacons.
 - Nodes must listen for incoming UDP discovery packets on a configurable discovery port (default: `8888`).
-- Nodes must periodically clean up stale or disconnected devices when heartbeat beacons cease (configurable timeout: 15 seconds).
+- Nodes must periodically clean up stale or disconnected devices when heartbeat beacons cease (configurable timeout: 12 seconds; nodes also send a LEAVE beacon on shutdown for immediate removal).
 - Discovered devices must be pushed to the web client in real time via WebSockets.
 
 ### FR3: Reliable TCP Point-to-Point File Transfer
