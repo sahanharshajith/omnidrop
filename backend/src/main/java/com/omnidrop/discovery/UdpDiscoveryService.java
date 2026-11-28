@@ -6,6 +6,7 @@ import com.omnidrop.websocket.WebSocketNotificationService;
 import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -40,7 +41,7 @@ public class UdpDiscoveryService {
     private final OmniDropProperties properties;
     private final WebSocketNotificationService notificationService;
     private final int httpPort;
-    private final PeerRegistry registry = new PeerRegistry();
+    private final PeerRegistry registry;
 
     private DatagramSocket broadcastSocket;
     private DatagramSocket listenerSocket;
@@ -49,12 +50,22 @@ public class UdpDiscoveryService {
     private ScheduledExecutorService scheduler;
     private Thread listenerThread;
 
+    @Autowired
     public UdpDiscoveryService(OmniDropProperties properties,
                                WebSocketNotificationService notificationService,
                                @Value("${server.port:8080}") int httpPort) {
+        this(properties, notificationService, httpPort, new PeerRegistry());
+    }
+
+    /** For tests: lets a test pass a PeerRegistry with a fake clock. */
+    UdpDiscoveryService(OmniDropProperties properties,
+                        WebSocketNotificationService notificationService,
+                        int httpPort,
+                        PeerRegistry registry) {
         this.properties = properties;
         this.notificationService = notificationService;
         this.httpPort = httpPort;
+        this.registry = registry;
     }
 
     /**
