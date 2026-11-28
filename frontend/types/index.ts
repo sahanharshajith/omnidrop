@@ -8,6 +8,11 @@ export interface PeerDevice {
   active: boolean;
 }
 
+/** MEMBER 1: a peer as the UI tracks it; seenAt is this browser's clock at the last heartbeat. */
+export interface LivePeer extends PeerDevice {
+  seenAt: number;
+}
+
 export type TransferState =
   | 'PENDING'
   | 'CONNECTING'

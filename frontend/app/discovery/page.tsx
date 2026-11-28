@@ -1,19 +1,37 @@
 "use client";
 
-import { useState } from "react";
-import { PeerDevice } from "@/types";
+import { useEffect, useState } from "react";
+import Link from "next/link";
+import { Info, Radio, RefreshCw, WifiOff, AlertTriangle } from "lucide-react";
+import { LivePeer, NodeHealth } from "@/types";
 import { api } from "@/services/api";
 import { usePeers } from "@/hooks/usePeers";
-import { PeerCard } from "@/components/PeerCard";
+import { useNow } from "@/hooks/useNow";
+import { useWebSocket } from "@/hooks/useWebSocket";
+import { RadarView } from "@/components/RadarView";
+import { DeviceDiscoveryCard } from "@/components/DeviceDiscoveryCard";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Radio, RefreshCw, Smartphone, Laptop, Monitor, AlertCircle, Info } from "lucide-react";
-import Link from "next/link";
+import { BEACON_INTERVAL_MS, PEER_TIMEOUT_MS } from "@/lib/peerStatus";
 
+/**
+ * MEMBER 1: Device Discovery page — radar + live peer cards fed by UDP discovery.
+ */
 export default function DiscoveryPage() {
   const { peers, refresh } = usePeers();
+  const { isConnected } = useWebSocket();
+  const now = useNow(1000);
+  const [health, setHealth] = useState<NodeHealth | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [selectedPeer, setSelectedPeer] = useState<PeerDevice | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+
+  useEffect(() => {
+    api.getHealth().then(setHealth).catch(() => setHealth(null));
+  }, []);
+
+  const selectedPeer = peers.find((p) => p.deviceId === selectedId) ?? null;
+  const onSelect = (peer: LivePeer) => setSelectedId(peer.deviceId);
+  const discoveryDown = health?.discoveryRunning === false;
 
   const handleBroadcast = async () => {
     setIsRefreshing(true);
@@ -31,18 +49,23 @@ export default function DiscoveryPage() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <div className="flex items-center space-x-2">
+          <div className="flex flex-wrap items-center gap-2">
             <h1 className="text-2xl font-bold tracking-tight text-slate-900">Device Discovery</h1>
             <Badge variant="default" className="text-xs">Member 1 (UDP)</Badge>
           </div>
-          <p className="text-xs sm:text-sm text-slate-500">
-            Dynamically detects active nodes broadcasting on UDP port 8888 across the local subnet.
+          <p className="text-xs text-slate-500 sm:text-sm">
+            Finds OmniDrop nodes broadcasting on UDP port {health?.udpPort ?? 8888} across the local subnet.
           </p>
         </div>
 
-        <div className="flex items-center space-x-2">
+        <div className="flex flex-wrap items-center gap-2">
+          {!isConnected && (
+            <Badge variant="warning" className="text-xs">
+              <WifiOff className="mr-1 h-3 w-3" /> Reconnecting…
+            </Badge>
+          )}
           <Button
             variant="outline"
             size="sm"
@@ -56,63 +79,96 @@ export default function DiscoveryPage() {
         </div>
       </div>
 
-      {/* Network Concept Note */}
-      <div className="rounded-xl border border-indigo-100 bg-indigo-50/70 p-4 text-xs text-indigo-900 flex items-start space-x-3">
-        <Info className="h-4 w-4 text-indigo-600 shrink-0 mt-0.5" />
+      {/* Discovery offline warning (e.g. UDP port already in use) */}
+      {discoveryDown && (
+        <div role="alert" className="flex items-start gap-3 rounded-xl border border-rose-200 bg-rose-50 p-4 text-xs text-rose-900">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-rose-600" />
+          <div>
+            <span className="font-semibold">Discovery is offline.</span>{" "}
+            {health?.discoveryError ?? "The UDP listener is not running."} Close any other OmniDrop instance and restart the backend.
+          </div>
+        </div>
+      )}
+
+      {/* Network concept note */}
+      <div className="flex items-start gap-3 rounded-xl border border-indigo-100 bg-indigo-50/70 p-4 text-xs text-indigo-900">
+        <Info className="mt-0.5 h-4 w-4 shrink-0 text-indigo-600" />
         <div>
-          <span className="font-semibold">How it works:</span> OmniDrop sends DatagramPackets to IPv4 broadcast addresses (<span className="font-mono">255.255.255.255</span>) every 3 seconds using Java <span className="font-mono">DatagramSocket</span>. Devices that stop sending heartbeats for 12 seconds are automatically dropped.
+          <span className="font-semibold">How it works:</span> every node sends a small JSON{" "}
+          <span className="font-mono">DatagramPacket</span> to each IPv4 broadcast address every{" "}
+          {BEACON_INTERVAL_MS / 1000} seconds using Java <span className="font-mono">DatagramSocket</span>. Nodes silent for{" "}
+          {PEER_TIMEOUT_MS / 1000} seconds are dropped, and a node that shuts down sends a LEAVE beacon so it disappears at once.
         </div>
       </div>
 
-      {/* Peer Grid */}
-      {peers.length === 0 ? (
-        <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-12 text-center">
-          <Radio className="mx-auto h-12 w-12 text-slate-400 animate-pulse" />
-          <h3 className="mt-4 text-base font-semibold text-slate-900">No Nearby Devices Found Yet</h3>
-          <p className="mt-1 text-xs text-slate-500 max-w-sm mx-auto">
-            Connect devices to the same local Wi-Fi router or mobile hotspot and run OmniDrop on each machine.
-          </p>
-          <Button
-            variant="default"
-            size="sm"
-            onClick={handleBroadcast}
-            className="mt-5 text-xs font-semibold"
-          >
-            Transmit Discovery Ping
-          </Button>
-        </div>
-      ) : (
-        <div className="space-y-4">
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {peers.map((peer) => (
-              <PeerCard
-                key={peer.deviceId}
-                peer={peer}
-                isSelected={selectedPeer?.deviceId === peer.deviceId}
-                onSelect={(p) => setSelectedPeer(p)}
-              />
-            ))}
+      <div className="grid gap-6 lg:grid-cols-[340px_1fr]">
+        {/* Radar */}
+        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          <RadarView
+            peers={peers}
+            now={now}
+            selfName={health?.nodeName ?? "This device"}
+            selectedId={selectedId}
+            onSelect={onSelect}
+          />
+          <div className="mt-3 flex flex-wrap justify-center gap-3 text-[11px] text-slate-500">
+            <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-emerald-500" /> Online</span>
+            <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-amber-500" /> Weak signal</span>
+            <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-slate-400" /> Offline</span>
           </div>
+        </div>
+
+        {/* Peer list */}
+        <div className="space-y-4">
+          {peers.length === 0 ? (
+            <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-8 text-center sm:p-12">
+              <Radio className="mx-auto h-12 w-12 animate-pulse text-slate-400 motion-reduce:animate-none" />
+              <h3 className="mt-4 text-base font-semibold text-slate-900">No nearby devices found yet</h3>
+              <p className="mx-auto mt-1 max-w-sm text-xs text-slate-500">
+                Connect devices to the same Wi-Fi router or mobile hotspot, run OmniDrop on each one, and allow UDP port 8888 through the firewall.
+              </p>
+              <Button variant="default" size="sm" onClick={handleBroadcast} className="mt-5 text-xs font-semibold">
+                Send discovery ping
+              </Button>
+            </div>
+          ) : (
+            <>
+              <p className="text-xs font-medium text-slate-500">
+                {peers.length} device{peers.length === 1 ? "" : "s"} nearby
+              </p>
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                {peers.map((peer) => (
+                  <DeviceDiscoveryCard
+                    key={peer.deviceId}
+                    peer={peer}
+                    now={now}
+                    isSelected={peer.deviceId === selectedId}
+                    onSelect={onSelect}
+                  />
+                ))}
+              </div>
+            </>
+          )}
 
           {selectedPeer && (
-            <div className="rounded-xl border border-indigo-200 bg-white p-5 shadow-sm space-y-3">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h4 className="font-semibold text-slate-900">Selected Device: {selectedPeer.deviceName}</h4>
-                  <p className="text-xs text-slate-500">Target IP: {selectedPeer.ipAddress} | Port: {selectedPeer.tcpPort}</p>
-                </div>
-                <div className="flex space-x-2">
-                  <Link href={`/transfer?peerIp=${selectedPeer.ipAddress}&peerPort=${selectedPeer.tcpPort}&peerName=${encodeURIComponent(selectedPeer.deviceName)}`}>
-                    <Button size="sm" className="text-xs font-semibold">
-                      Send File to This Device
-                    </Button>
-                  </Link>
-                </div>
+            <div className="flex flex-col gap-3 rounded-xl border border-indigo-200 bg-white p-5 shadow-sm sm:flex-row sm:items-center sm:justify-between">
+              <div className="min-w-0">
+                <h4 className="truncate font-semibold text-slate-900">Selected: {selectedPeer.deviceName}</h4>
+                <p className="text-xs text-slate-500">
+                  Target IP: {selectedPeer.ipAddress} | TCP port: {selectedPeer.tcpPort}
+                </p>
               </div>
+              <Link
+                href={`/transfer?peerIp=${encodeURIComponent(selectedPeer.ipAddress)}&peerPort=${selectedPeer.tcpPort}&peerName=${encodeURIComponent(selectedPeer.deviceName)}`}
+              >
+                <Button size="sm" className="w-full text-xs font-semibold sm:w-auto">
+                  Send File to This Device
+                </Button>
+              </Link>
             </div>
           )}
         </div>
-      )}
+      </div>
     </div>
   );
 }
