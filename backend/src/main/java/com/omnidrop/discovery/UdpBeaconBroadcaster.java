@@ -24,12 +24,20 @@ public class UdpBeaconBroadcaster implements Runnable {
     private final DatagramSocket socket;
     private final OmniDropProperties properties;
     private final int httpPort;
+    private final String event;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
+    /** Normal heartbeat beacon ("I am here"). */
     public UdpBeaconBroadcaster(DatagramSocket socket, OmniDropProperties properties, int httpPort) {
+        this(socket, properties, httpPort, "ALIVE");
+    }
+
+    /** event = "ALIVE" for heartbeats, "LEAVE" when this node is shutting down. */
+    public UdpBeaconBroadcaster(DatagramSocket socket, OmniDropProperties properties, int httpPort, String event) {
         this.socket = socket;
         this.properties = properties;
         this.httpPort = httpPort;
+        this.event = event;
     }
 
     @Override
@@ -45,6 +53,7 @@ public class UdpBeaconBroadcaster implements Runnable {
             beaconPayload.put("tcpPort", properties.getNetwork().getTcpPort());
             beaconPayload.put("httpPort", httpPort);
             beaconPayload.put("timestamp", System.currentTimeMillis());
+            beaconPayload.put("event", event);
 
             byte[] data = objectMapper.writeValueAsString(beaconPayload).getBytes(StandardCharsets.UTF_8);
 

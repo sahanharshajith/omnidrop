@@ -114,6 +114,10 @@ public class UdpDiscoveryService {
     @PreDestroy
     public synchronized void stop() {
         if (!running && scheduler == null) return;
+        // Tell the other nodes we are leaving, so they drop us at once instead of after the timeout
+        if (running && broadcastSocket != null && !broadcastSocket.isClosed()) {
+            new UdpBeaconBroadcaster(broadcastSocket, properties, httpPort, "LEAVE").run();
+        }
         running = false;
         if (scheduler != null) {
             scheduler.shutdownNow();
@@ -170,6 +174,19 @@ public class UdpDiscoveryService {
             notificationService.notifyPeerDiscovered(peer);
         }
         //REFRESHED is just a heartbeat, nothing to tell the UI
+    }
+
+    /**
+     * Called by UdpPacketListener when a peer sends a LEAVE beacon (it is shutting down).
+     */
+    public void unregisterPeer(String deviceId) {
+        if (deviceId.equals(properties.getNode().getId())) {
+            return;
+        }
+        registry.remove(deviceId).ifPresent(peer -> {
+            log.info("Peer left: {} ({})", peer.getDeviceName(), deviceId);
+            notificationService.notifyPeerLost(deviceId);
+        });
     }
 
     /**

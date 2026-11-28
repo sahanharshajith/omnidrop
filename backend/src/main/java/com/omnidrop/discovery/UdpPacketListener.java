@@ -63,7 +63,13 @@ public class UdpPacketListener implements Runnable {
             }
 
             PeerDevice peer = parseBeacon(packet);
-            if (peer != null) {
+            if (peer == null) {
+                continue;
+            }
+            if (isLeave(packet)) {
+                // The sender is shutting down: remove it right away
+                discoveryService.unregisterPeer(peer.getDeviceId());
+            } else {
                 discoveryService.registerPeer(peer);
             }
         }
@@ -115,6 +121,18 @@ public class UdpPacketListener implements Runnable {
 
         // The sender's real IP comes from the packet itself, not from the JSON
         return new PeerDevice(deviceId, deviceName, from, tcpPort, httpPort, System.currentTimeMillis());
+    }
+
+    /**
+     * True when the beacon says "event": "LEAVE". A missing event means ALIVE (older nodes don't send it).
+     */
+    boolean isLeave(DatagramPacket packet) {
+        try {
+            JsonNode root = objectMapper.readTree(packet.getData(), packet.getOffset(), packet.getLength());
+            return "LEAVE".equals(root.path("event").asText("ALIVE"));
+        } catch (IOException e) {
+            return false;
+        }
     }
 
     private static boolean isValidPort(int port) {
