@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { PeerDevice } from "@/types";
 import { api } from "@/services/api";
-import { useWebSocket } from "@/hooks/useWebSocket";
+import { usePeers } from "@/hooks/usePeers";
 import { PeerCard } from "@/components/PeerCard";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -11,46 +11,20 @@ import { Radio, RefreshCw, Smartphone, Laptop, Monitor, AlertCircle, Info } from
 import Link from "next/link";
 
 export default function DiscoveryPage() {
-  const [peers, setPeers] = useState<PeerDevice[]>([]);
+  const { peers, refresh } = usePeers();
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [selectedPeer, setSelectedPeer] = useState<PeerDevice | null>(null);
-  const { lastMessage } = useWebSocket();
-
-  const fetchPeers = async () => {
-    setIsRefreshing(true);
-    try {
-      const data = await api.getDevices();
-      setPeers(data);
-    } catch (e) {
-      console.warn("Failed fetching peers:", e);
-    } finally {
-      setIsRefreshing(false);
-    }
-  };
-
-  useEffect(() => {
-    fetchPeers();
-  }, []);
-
-  useEffect(() => {
-    if (!lastMessage) return;
-    if (lastMessage.type === "DEVICE_DISCOVERED") {
-      const newPeer = lastMessage.payload as PeerDevice;
-      setPeers((prev) => {
-        const filtered = prev.filter((p) => p.deviceId !== newPeer.deviceId);
-        return [...filtered, newPeer];
-      });
-    } else if (lastMessage.type === "DEVICE_LOST") {
-      const lostId = (lastMessage.payload as { deviceId: string }).deviceId;
-      setPeers((prev) => prev.filter((p) => p.deviceId !== lostId));
-    }
-  }, [lastMessage]);
 
   const handleBroadcast = async () => {
     setIsRefreshing(true);
-    await api.triggerDiscovery();
-    setTimeout(() => {
-      fetchPeers();
+    try {
+      await api.triggerDiscovery();
+    } catch (e) {
+      console.warn("Failed to trigger discovery:", e);
+    }
+    setTimeout(async () => {
+      await refresh();
+      setIsRefreshing(false);
     }, 500);
   };
 
